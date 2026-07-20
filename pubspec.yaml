@@ -1,0 +1,19 @@
+name: galeria_app
+description: Galeria para organizar y ver fotos y videos por carpetas y subcarpetas.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  permission_handler: ^11.3.0
+  video_player: ^2.9.2
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

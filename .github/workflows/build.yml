@@ -1,0 +1,45 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Generar carpeta android si no existe
+        run: |
+          if [ ! -d "android" ]; then
+            flutter create --platforms=android --org com.galeria.app .
+          fi
+
+      - name: Aplicar AndroidManifest personalizado (permisos de almacenamiento)
+        run: cp android_overrides/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+
+      - name: Obtener dependencias
+        run: flutter pub get
+
+      - name: Compilar APK release
+        run: flutter build apk --release
+
+      - name: Subir APK como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: galeria-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
