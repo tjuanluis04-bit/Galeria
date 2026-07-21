@@ -33,9 +33,9 @@ class ShizukuService {
         _checkedOnce = true;
         return false;
       }
-      var granted = await _api.checkPermission();
+      var granted = await _api.checkPermission() ?? false;
       if (!granted || forcePrompt) {
-        granted = await _api.requestPermission();
+        granted = await _api.requestPermission() ?? false;
       }
       _permissionGranted = granted;
       _checkedOnce = true;
