@@ -2,7 +2,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../main.dart' show rootStoragePath;
 import '../utils/file_utils.dart';
-import 'video_player_screen.dart';
+import '../services/file_ops.dart';
+import '../services/shizuku_service.dart';
+import '../widgets/video_tile_thumbnail.dart';
+import 'media_viewer_screen.dart';
 import 'folder_picker_screen.dart';
 
 class GalleryScreen extends StatefulWidget {
@@ -22,6 +25,13 @@ class _GalleryScreenState extends State<GalleryScreen> {
 
   bool get _selectionMode => _selected.isNotEmpty;
   bool get _isRoot => widget.path == rootStoragePath;
+
+  // Accesos rápidos a carpetas protegidas del sistema (solo se muestran en
+  // la raíz). Si el listado normal falla ahí, se sugiere activar Shizuku.
+  static const _quickAccess = [
+    '$rootStoragePath/Android/data',
+    '$rootStoragePath/Android/obb',
+  ];
 
   @override
   void initState() {
@@ -65,8 +75,12 @@ class _GalleryScreenState extends State<GalleryScreen> {
       });
     } catch (e) {
       if (!mounted) return;
+      final isProtected = widget.path.contains('/Android/data') || widget.path.contains('/Android/obb');
       setState(() {
-        _error = 'No se pudo abrir esta carpeta.\n$e';
+        _error = isProtected
+            ? 'No se pudo abrir esta carpeta (protegida por el sistema).\n'
+                'Probá activar Shizuku desde el botón de arriba y reintentar.\n$e'
+            : 'No se pudo abrir esta carpeta.\n$e';
         _loading = false;
       });
     }
@@ -82,91 +96,89 @@ class _GalleryScreenState extends State<GalleryScreen> {
     });
   }
 
+  Future<void> _checkShizuku() async {
+    final ok = await ShizukuService.instance.ensureReady(forcePrompt: true);
+    if (!mounted) return;
+    _showSnack(ok
+        ? 'Shizuku activo: se usará como respaldo si el sistema deniega alguna operación.'
+        : 'Shizuku no disponible (no está instalado/corriendo o se negó el permiso).');
+  }
+
   Future<void> _createFolder() async {
     final name = await _promptText(title: 'Nueva carpeta', hint: 'Nombre de la carpeta');
     if (name == null || name.trim().isEmpty) return;
-    try {
-      final newDir = Directory('${widget.path}/${name.trim()}');
-      if (await newDir.exists()) {
-        _showSnack('Ya existe una carpeta con ese nombre');
-        return;
-      }
-      await newDir.create(recursive: true);
+    final newPath = '${widget.path}/${name.trim()}';
+    if (await Directory(newPath).exists()) {
+      _showSnack('Ya existe una carpeta con ese nombre');
+      return;
+    }
+    final result = await FileOps.createDir(newPath);
+    if (result.success) {
+      if (result.usedShizuku) _showSnack('Carpeta creada con Shizuku');
       _load();
-    } catch (e) {
-      _showSnack('Error al crear la carpeta: $e');
+    } else {
+      _showSnack('Error al crear la carpeta: ${result.error}');
     }
   }
 
   Future<void> _renameFolder(Directory dir) async {
     final currentName = folderName(dir.path);
-    final name = await _promptText(
-      title: 'Renombrar carpeta',
-      hint: 'Nuevo nombre',
-      initial: currentName,
-    );
+    final name = await _promptText(title: 'Renombrar carpeta', hint: 'Nuevo nombre', initial: currentName);
     if (name == null || name.trim().isEmpty || name.trim() == currentName) return;
-    try {
-      final newPath = '${parentPath(dir.path)}/${name.trim()}';
-      await dir.rename(newPath);
+    final newPath = '${parentPath(dir.path)}/${name.trim()}';
+    final result = await FileOps.renameDir(dir.path, newPath);
+    if (result.success) {
+      if (result.usedShizuku) _showSnack('Renombrado con Shizuku');
       _load();
-    } catch (e) {
-      _showSnack('Error al renombrar: $e');
+    } else {
+      _showSnack('Error al renombrar: ${result.error}');
     }
   }
 
   Future<void> _deleteFolder(Directory dir) async {
-    final confirm =
-        await _confirm('¿Eliminar la carpeta "${folderName(dir.path)}" y todo su contenido?');
+    final confirm = await _confirm('¿Eliminar la carpeta "${folderName(dir.path)}" y todo su contenido?');
     if (confirm != true) return;
-    try {
-      await dir.delete(recursive: true);
+    final result = await FileOps.deleteDir(dir.path);
+    if (result.success) {
+      if (result.usedShizuku) _showSnack('Carpeta eliminada con Shizuku');
       _load();
-    } catch (e) {
-      _showSnack('Error al eliminar: $e');
+    } else {
+      _showSnack('Error al eliminar: ${result.error}');
     }
   }
 
   Future<void> _deleteSelected() async {
     final count = _selected.length;
-    final confirm =
-        await _confirm('¿Eliminar $count elemento(s)? Esta acción no se puede deshacer.');
+    final confirm = await _confirm('¿Eliminar $count elemento(s)? Esta acción no se puede deshacer.');
     if (confirm != true) return;
+    var shizukuUsed = false;
     for (final p in _selected.toList()) {
-      try {
-        await File(p).delete();
-      } catch (_) {}
+      final result = await FileOps.deleteFile(p);
+      if (result.usedShizuku) shizukuUsed = true;
     }
     setState(() => _selected.clear());
     _load();
+    if (shizukuUsed) _showSnack('Algunos archivos se eliminaron con Shizuku');
   }
 
   Future<void> _moveSelected() async {
     final dest = await Navigator.push<String>(
       context,
-      MaterialPageRoute(
-        builder: (_) => const FolderPickerScreen(startPath: rootStoragePath),
-      ),
+      MaterialPageRoute(builder: (_) => const FolderPickerScreen(startPath: rootStoragePath)),
     );
     if (dest == null) return;
     var errors = 0;
+    var shizukuUsed = false;
     for (final p in _selected.toList()) {
-      try {
-        final newPath = '$dest/${folderName(p)}';
-        final f = File(p);
-        try {
-          await f.rename(newPath);
-        } catch (_) {
-          await f.copy(newPath);
-          await f.delete();
-        }
-      } catch (_) {
-        errors++;
-      }
+      final newPath = '$dest/${folderName(p)}';
+      final result = await FileOps.moveFile(p, newPath);
+      if (!result.success) errors++;
+      if (result.usedShizuku) shizukuUsed = true;
     }
     setState(() => _selected.clear());
     _load();
     if (errors > 0) _showSnack('$errors elemento(s) no se pudieron mover');
+    if (shizukuUsed) _showSnack('Algunos archivos se movieron con Shizuku');
   }
 
   void _showSnack(String msg) {
@@ -201,8 +213,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('Aceptar')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('Aceptar')),
         ],
       ),
     );
@@ -268,6 +279,16 @@ class _GalleryScreenState extends State<GalleryScreen> {
     );
   }
 
+  void _openViewer(int index) async {
+    final changed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MediaViewerScreen(files: _mediaFiles, initialIndex: index),
+      ),
+    );
+    if (changed == true) _load();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -300,6 +321,11 @@ class _GalleryScreenState extends State<GalleryScreen> {
                     icon: const Icon(Icons.more_vert),
                     onPressed: () => _showFolderMenu(Directory(widget.path)),
                   ),
+                IconButton(
+                  icon: const Icon(Icons.security),
+                  tooltip: 'Activar Shizuku (acceso a carpetas protegidas)',
+                  onPressed: _checkShizuku,
+                ),
                 IconButton(icon: const Icon(Icons.refresh), onPressed: _load),
               ],
       ),
@@ -319,13 +345,36 @@ class _GalleryScreenState extends State<GalleryScreen> {
     if (_error != null) {
       return Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!)));
     }
-    if (_folders.isEmpty && _mediaFiles.isEmpty) {
+    if (_folders.isEmpty && _mediaFiles.isEmpty && !_isRoot) {
       return const Center(child: Text('Carpeta vacía'));
     }
     return RefreshIndicator(
       onRefresh: _load,
       child: CustomScrollView(
         slivers: [
+          if (_isRoot)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: Text('Accesos rápidos', style: Theme.of(context).textTheme.labelLarge),
+              ),
+            ),
+          if (_isRoot)
+            SliverList(
+              delegate: SliverChildListDelegate([
+                for (final p in _quickAccess)
+                  ListTile(
+                    leading: const Icon(Icons.folder_special, color: Colors.deepPurpleAccent),
+                    title: Text(folderName(p)),
+                    subtitle: const Text('Carpeta protegida del sistema'),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => GalleryScreen(path: p)),
+                    ).then((_) => _load()),
+                  ),
+                const Divider(height: 1),
+              ]),
+            ),
           if (_folders.isNotEmpty)
             SliverList(
               delegate: SliverChildBuilderDelegate(
@@ -359,7 +408,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
                   mainAxisSpacing: 4,
                 ),
                 delegate: SliverChildBuilderDelegate(
-                  (ctx, i) => _buildMediaTile(_mediaFiles[i]),
+                  (ctx, i) => _buildMediaTile(i),
                   childCount: _mediaFiles.length,
                 ),
               ),
@@ -369,7 +418,8 @@ class _GalleryScreenState extends State<GalleryScreen> {
     );
   }
 
-  Widget _buildMediaTile(File file) {
+  Widget _buildMediaTile(int index) {
+    final file = _mediaFiles[index];
     final selected = _selected.contains(file.path);
     final isVideo = isVideoFile(file.path);
     return GestureDetector(
@@ -378,30 +428,15 @@ class _GalleryScreenState extends State<GalleryScreen> {
           _toggleSelect(file.path);
           return;
         }
-        if (isVideo) {
-          Navigator.push(
-              context, MaterialPageRoute(builder: (_) => VideoPlayerScreen(path: file.path)));
-        } else {
-          Navigator.push(context, MaterialPageRoute(builder: (_) => _ImageViewer(file: file)));
-        }
+        _openViewer(index);
       },
       onLongPress: () => _toggleSelect(file.path),
       child: Stack(
         fit: StackFit.expand,
         children: [
           isVideo
-              ? Container(
-                  color: Colors.black26,
-                  alignment: Alignment.center,
-                  child: const Icon(Icons.movie, size: 32),
-                )
+              ? VideoTileThumbnail(path: file.path)
               : Image.file(file, fit: BoxFit.cover, cacheWidth: 300),
-          if (isVideo)
-            const Positioned(
-              bottom: 4,
-              right: 4,
-              child: Icon(Icons.play_circle_fill, color: Colors.white70),
-            ),
           Positioned(
             top: 2,
             right: 2,
@@ -409,8 +444,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
               onTap: () => _showFileInfo(file),
               child: Container(
                 padding: const EdgeInsets.all(3),
-                decoration:
-                    BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(12)),
+                decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(12)),
                 child: const Icon(Icons.info_outline, size: 15, color: Colors.white),
               ),
             ),
@@ -423,23 +457,6 @@ class _GalleryScreenState extends State<GalleryScreen> {
             ),
         ],
       ),
-    );
-  }
-}
-
-class _ImageViewer extends StatelessWidget {
-  final File file;
-  const _ImageViewer({required this.file});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        title: Text(folderName(file.path)),
-      ),
-      body: Center(child: InteractiveViewer(child: Image.file(file))),
     );
   }
 }

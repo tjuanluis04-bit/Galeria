@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../services/file_ops.dart';
 import '../utils/file_utils.dart';
 
 class FolderPickerScreen extends StatefulWidget {
@@ -66,10 +67,13 @@ class _FolderPickerScreenState extends State<FolderPickerScreen> {
       ),
     );
     if (name == null || name.trim().isEmpty) return;
-    try {
-      await Directory('$_current/${name.trim()}').create(recursive: true);
+    final result = await FileOps.createDir('$_current/${name.trim()}');
+    if (result.success) {
       _load();
-    } catch (_) {}
+    } else if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error al crear: ${result.error}')));
+    }
   }
 
   @override
