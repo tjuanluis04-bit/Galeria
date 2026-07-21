@@ -32,8 +32,28 @@ jobs:
       - name: Aplicar AndroidManifest personalizado (permisos de almacenamiento)
         run: cp android_overrides/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
 
+      - name: Forzar minSdkVersion 24 (requerido por Shizuku)
+        run: |
+          if [ -f "android/app/build.gradle" ]; then
+            sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/' android/app/build.gradle
+            sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 24/' android/app/build.gradle
+          fi
+          if [ -f "android/app/build.gradle.kts" ]; then
+            sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/' android/app/build.gradle.kts
+            sed -i 's/minSdk = flutter.minSdk.get()/minSdk = 24/' android/app/build.gradle.kts
+          fi
+          echo "--- build.gradle(.kts) tras el parche ---"
+          cat android/app/build.gradle 2>/dev/null || cat android/app/build.gradle.kts 2>/dev/null
+
       - name: Obtener dependencias
         run: flutter pub get
+
+      - name: Parchear plugins viejos que usan jcenter() (ya no existe)
+        run: |
+          find "$HOME/.pub-cache" -name "build.gradle" -exec sed -i 's/jcenter()/mavenCentral()/g' {} \;
+          find "$HOME/.pub-cache" -name "build.gradle.kts" -exec sed -i 's/jcenter()/mavenCentral()/g' {} \;
+          echo "Archivos que aún mencionan jcenter (debería estar vacío):"
+          grep -rl "jcenter()" "$HOME/.pub-cache" || true
 
       - name: Compilar APK release
         run: flutter build apk --release
