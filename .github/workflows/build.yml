@@ -56,12 +56,19 @@ jobs:
       - name: Obtener dependencias
         run: flutter pub get
 
-      - name: Parchear plugins viejos que usan jcenter() (ya no existe)
+      - name: Parchear plugins viejos (jcenter obsoleto y compileSdk desactualizado)
         run: |
           find "$HOME/.pub-cache" -name "build.gradle" -exec sed -i 's/jcenter()/mavenCentral()/g' {} \;
           find "$HOME/.pub-cache" -name "build.gradle.kts" -exec sed -i 's/jcenter()/mavenCentral()/g' {} \;
           echo "Archivos que aún mencionan jcenter (debería estar vacío):"
           grep -rl "jcenter()" "$HOME/.pub-cache" || true
+
+          find "$HOME/.pub-cache" -path "*/android/build.gradle" -exec \
+            sed -i -E 's/compileSdkVersion[[:space:]]+[0-9]+/compileSdkVersion 36/g' {} \;
+          find "$HOME/.pub-cache" -path "*/android/build.gradle.kts" -exec \
+            sed -i -E 's/compileSdk[[:space:]]*=[[:space:]]*[0-9]+/compileSdk = 36/g' {} \;
+          echo "compileSdk restantes por debajo de 36 en plugins (debería estar vacío):"
+          grep -rlE "compileSdk(Version)?[[:space:]=]+3[0-5]([^0-9]|$)" "$HOME/.pub-cache" --include="build.gradle*" || true
 
       - name: Compilar APK release
         run: flutter build apk --release
