@@ -14,8 +14,13 @@ class ThumbnailCache {
 
   final Map<String, Future<String?>> _thumbFutures = {};
   final Map<String, Future<Duration?>> _durationFutures = {};
+  final Map<String, Duration?> _resolvedDurations = {};
   final _videoInfo = FlutterVideoInfo();
   Directory? _cacheDir;
+
+  /// Duración ya resuelta (sin esperar), o null si todavía no se calculó.
+  /// Útil para ordenar listas sin tener que hacer awaits en el comparador.
+  Duration? cachedDuration(String videoPath) => _resolvedDurations[videoPath];
 
   Future<Directory> _dir() async {
     _cacheDir ??= await getTemporaryDirectory();
@@ -64,7 +69,11 @@ class ThumbnailCache {
 
   /// Devuelve (y cachea en memoria) la duración del video.
   Future<Duration?> durationFor(String videoPath) {
-    return _durationFutures.putIfAbsent(videoPath, () => _fetchDuration(videoPath));
+    return _durationFutures.putIfAbsent(videoPath, () async {
+      final d = await _fetchDuration(videoPath);
+      _resolvedDurations[videoPath] = d;
+      return d;
+    });
   }
 
   Future<Duration?> _fetchDuration(String videoPath) async {

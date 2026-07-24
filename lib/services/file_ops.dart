@@ -78,6 +78,36 @@ class FileOps {
     }
   }
 
+  /// Mueve una carpeta entera (con todo su contenido) a otra ubicación.
+  static Future<FileOpResult> moveDir(String srcPath, String destPath) async {
+    try {
+      try {
+        await Directory(srcPath).rename(destPath);
+      } catch (_) {
+        await _copyDirRecursive(Directory(srcPath), Directory(destPath));
+        await Directory(srcPath).delete(recursive: true);
+      }
+      return const FileOpResult(success: true);
+    } catch (e) {
+      final ok = await _shizukuFallback('mv ${_q(srcPath)} ${_q(destPath)}');
+      if (ok) return const FileOpResult(success: true, usedShizuku: true);
+      return FileOpResult(success: false, error: e.toString());
+    }
+  }
+
+  static Future<void> _copyDirRecursive(Directory src, Directory dest) async {
+    await dest.create(recursive: true);
+    await for (final entity in src.list(followLinks: false)) {
+      final name = entity.path.split(Platform.pathSeparator).last;
+      final newPath = '${dest.path}/$name';
+      if (entity is Directory) {
+        await _copyDirRecursive(entity, Directory(newPath));
+      } else if (entity is File) {
+        await entity.copy(newPath);
+      }
+    }
+  }
+
   static Future<bool> _shizukuFallback(String command) async {
     final ready = await ShizukuService.instance.ensureReady();
     if (!ready) return false;

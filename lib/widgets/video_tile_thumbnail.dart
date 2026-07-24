@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../services/thumbnail_cache.dart';
+import '../services/settings_service.dart';
+import '../utils/file_utils.dart';
 
 class VideoTileThumbnail extends StatelessWidget {
   final String path;
@@ -16,6 +18,37 @@ class VideoTileThumbnail extends StatelessWidget {
       return '$h:$mm:$ss';
     }
     return '$m:$ss';
+  }
+
+  Widget _buildBadge(BuildContext context) {
+    final mode = SettingsService.instance.videoIndicator;
+    if (mode == VideoIndicator.off) return const SizedBox.shrink();
+    if (mode == VideoIndicator.size) {
+      int bytes = 0;
+      try {
+        bytes = File(path).statSync().size;
+      } catch (_) {}
+      return _badge(formatBytes(bytes));
+    }
+    return FutureBuilder<Duration?>(
+      future: ThumbnailCache.instance.durationFor(path),
+      builder: (context, durSnap) {
+        final d = durSnap.data;
+        if (d == null) return const SizedBox.shrink();
+        return _badge(_formatDuration(d));
+      },
+    );
+  }
+
+  Widget _badge(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 11)),
+    );
   }
 
   @override
@@ -48,28 +81,7 @@ class VideoTileThumbnail extends StatelessWidget {
           right: 4,
           child: Icon(Icons.play_circle_fill, color: Colors.white70),
         ),
-        Positioned(
-          bottom: 4,
-          left: 4,
-          child: FutureBuilder<Duration?>(
-            future: ThumbnailCache.instance.durationFor(path),
-            builder: (context, durSnap) {
-              final d = durSnap.data;
-              if (d == null) return const SizedBox.shrink();
-              return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  _formatDuration(d),
-                  style: const TextStyle(color: Colors.white, fontSize: 11),
-                ),
-              );
-            },
-          ),
-        ),
+        Positioned(bottom: 4, left: 4, child: _buildBadge(context)),
       ],
     );
   }

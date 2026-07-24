@@ -1,10 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../main.dart' show rootStoragePath;
 import '../utils/file_utils.dart';
 import '../services/file_ops.dart';
-import 'folder_picker_screen.dart';
+import '../widgets/move_picker_sheet.dart';
 import 'mosaic_screen.dart';
 
 /// Visor a pantalla completa para fotos y videos, con deslizamiento para
@@ -42,12 +43,7 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
   Future<void> _moveCurrent() async {
     if (_files.isEmpty) return;
     final current = _files[_index];
-    final dest = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const FolderPickerScreen(startPath: rootStoragePath),
-      ),
-    );
+    final dest = await showMovePickerSheet(context, startPath: rootStoragePath);
     if (dest == null) return;
     final newPath = '$dest/${folderName(current.path)}';
     final result = await FileOps.moveFile(current.path, newPath);
@@ -118,46 +114,46 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
         Navigator.pop(context, _changed);
       },
       child: Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
         backgroundColor: Colors.black,
-        title: Text('${_index + 1} / ${_files.length}', style: const TextStyle(fontSize: 14)),
-        actions: [
-          if (isVideoFile(current.path))
-            IconButton(
-              icon: const Icon(Icons.auto_awesome_mosaic),
-              tooltip: 'Crear mosaico del video',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => MosaicScreen(videoPath: current.path)),
+        appBar: AppBar(
+          backgroundColor: Colors.black,
+          title: Text('${_index + 1} / ${_files.length}', style: const TextStyle(fontSize: 14)),
+          actions: [
+            if (isVideoFile(current.path))
+              IconButton(
+                icon: const Icon(Icons.auto_awesome_mosaic),
+                tooltip: 'Crear mosaico del video',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => MosaicScreen(videoPath: current.path)),
+                ),
               ),
+            IconButton(
+              icon: const Icon(Icons.drive_file_move_outline),
+              tooltip: 'Mover a otra carpeta',
+              onPressed: _moveCurrent,
             ),
-          IconButton(
-            icon: const Icon(Icons.drive_file_move_outline),
-            tooltip: 'Mover a otra carpeta',
-            onPressed: _moveCurrent,
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Eliminar',
-            onPressed: _deleteCurrent,
-          ),
-        ],
-      ),
-      body: PageView.builder(
-        controller: _pageController,
-        itemCount: _files.length,
-        onPageChanged: (i) => setState(() => _index = i),
-        itemBuilder: (ctx, i) {
-          final file = _files[i];
-          if (isVideoFile(file.path)) {
-            return _InlineVideoPage(file: file, active: i == _index);
-          }
-          return InteractiveViewer(
-            child: Center(child: Image.file(file)),
-          );
-        },
-      ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Eliminar',
+              onPressed: _deleteCurrent,
+            ),
+          ],
+        ),
+        body: PageView.builder(
+          controller: _pageController,
+          itemCount: _files.length,
+          onPageChanged: (i) => setState(() => _index = i),
+          itemBuilder: (ctx, i) {
+            final file = _files[i];
+            if (isVideoFile(file.path)) {
+              return _InlineVideoPage(file: file, active: i == _index);
+            }
+            return InteractiveViewer(
+              child: Center(child: Image.file(file)),
+            );
+          },
+        ),
       ),
     );
   }
@@ -176,10 +172,18 @@ class _InlineVideoPageState extends State<_InlineVideoPage> {
   VideoPlayerController? _controller;
   bool _ready = false;
   double _speed = 1.0;
+  BoxFit _fit = BoxFit.contain;
+  bool _looping = false;
+  bool _autoNext = false;
+  double? _seekBubbleSeconds; // si no es null, muestra el "+10s"/"-10s" a un lado
+  bool _seekBubbleLeft = false;
+  Timer? _seekBubbleTimer;
 
   static const List<double> _speeds = [
     0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0
   ];
+
+  static const List<BoxFit> _fits = [BoxFit.contain, BoxFit.cover, BoxFit.fill];
 
   @override
   void initState() {
@@ -192,8 +196,28 @@ class _InlineVideoPageState extends State<_InlineVideoPage> {
     _controller = controller;
     await controller.initialize();
     if (!mounted) return;
+    controller.addListener(_onTick);
     setState(() => _ready = true);
     if (widget.active) controller.play();
+  }
+
+  bool _autoNextTriggered = false;
+
+  void _onTick() {
+    final c = _controller;
+    if (c == null || !_ready) return;
+    if (_autoNext &&
+        !_looping &&
+        !_autoNextTriggered &&
+        c.value.position >= c.value.duration &&
+        c.value.duration > Duration.zero) {
+      _autoNextTriggered = true;
+      final page = context.findAncestorStateOfType<_MediaViewerScreenState>();
+      page?._pageController.nextPage(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
   @override
@@ -210,6 +234,8 @@ class _InlineVideoPageState extends State<_InlineVideoPage> {
 
   @override
   void dispose() {
+    _seekBubbleTimer?.cancel();
+    _controller?.removeListener(_onTick);
     _controller?.dispose();
     super.dispose();
   }
@@ -225,12 +251,63 @@ class _InlineVideoPageState extends State<_InlineVideoPage> {
     _controller?.setPlaybackSpeed(speed);
   }
 
+  void _cycleFit() {
+    final idx = _fits.indexOf(_fit);
+    setState(() => _fit = _fits[(idx + 1) % _fits.length]);
+  }
+
+  String get _fitLabel => switch (_fit) {
+        BoxFit.contain => 'Ajustar',
+        BoxFit.cover => 'Rellenar',
+        BoxFit.fill => 'Estirar',
+        _ => 'Ajustar',
+      };
+
+  void _toggleLoop() {
+    setState(() => _looping = !_looping);
+    _controller?.setLooping(_looping);
+    if (_looping) _autoNext = false;
+  }
+
+  void _toggleAutoNext() {
+    setState(() => _autoNext = !_autoNext);
+    if (_autoNext) {
+      _looping = false;
+      _controller?.setLooping(false);
+    }
+  }
+
+  void _seekBy(Duration delta, {required bool fromLeft}) {
+    final c = _controller;
+    if (c == null) return;
+    final target = c.value.position + delta;
+    final clamped = target < Duration.zero
+        ? Duration.zero
+        : (target > c.value.duration ? c.value.duration : target);
+    c.seekTo(clamped);
+    _seekBubbleTimer?.cancel();
+    setState(() {
+      _seekBubbleSeconds = delta.inSeconds.toDouble();
+      _seekBubbleLeft = fromLeft;
+    });
+    _seekBubbleTimer = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) setState(() => _seekBubbleSeconds = null);
+    });
+  }
+
   String get _sizeLabel {
     try {
       return formatBytes(widget.file.lengthSync());
     } catch (_) {
       return '—';
     }
+  }
+
+  String _fmtDuration(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return h > 0 ? '$h:$m:$s' : '$m:$s';
   }
 
   void _showInfo() {
@@ -273,18 +350,89 @@ class _InlineVideoPageState extends State<_InlineVideoPage> {
         Center(
           child: GestureDetector(
             onTap: _togglePlay,
-            child: AspectRatio(
-              aspectRatio: controller.value.aspectRatio,
-              child: VideoPlayer(controller),
+            child: SizedBox.expand(
+              child: FittedBox(
+                fit: _fit,
+                child: SizedBox(
+                  width: controller.value.size.width,
+                  height: controller.value.size.height,
+                  child: VideoPlayer(controller),
+                ),
+              ),
             ),
           ),
         ),
+        // Zonas invisibles a los lados para doble-toque: retroceder (izquierda)
+        // y adelantar (derecha) 10 segundos, sin interferir con el tap central
+        // de pausar/reproducir.
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: MediaQuery.of(context).size.width * 0.3,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onDoubleTap: () => _seekBy(const Duration(seconds: -10), fromLeft: true),
+          ),
+        ),
+        Positioned(
+          right: 0,
+          top: 0,
+          bottom: 0,
+          width: MediaQuery.of(context).size.width * 0.3,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onDoubleTap: () => _seekBy(const Duration(seconds: 10), fromLeft: false),
+          ),
+        ),
+        if (_seekBubbleSeconds != null)
+          Positioned(
+            left: _seekBubbleLeft ? 24 : null,
+            right: _seekBubbleLeft ? null : 24,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(_seekBubbleLeft ? Icons.fast_rewind : Icons.fast_forward, color: Colors.white),
+                    const SizedBox(width: 6),
+                    Text('${_seekBubbleSeconds!.abs().round()}s', style: const TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+            ),
+          ),
         Positioned(
           top: 8,
           right: 8,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              IconButton(
+                icon: Icon(_looping ? Icons.repeat_on : Icons.repeat, color: Colors.white),
+                tooltip: 'Repetir este video',
+                onPressed: _toggleLoop,
+              ),
+              IconButton(
+                icon: Icon(
+                  _autoNext ? Icons.skip_next : Icons.playlist_play,
+                  color: _autoNext ? Colors.deepPurpleAccent : Colors.white,
+                ),
+                tooltip: 'Reproducir el siguiente al terminar',
+                onPressed: _toggleAutoNext,
+              ),
+              IconButton(
+                icon: const Icon(Icons.aspect_ratio, color: Colors.white),
+                tooltip: 'Ajuste de imagen: $_fitLabel',
+                onPressed: _cycleFit,
+              ),
               PopupMenuButton<double>(
                 icon: const Icon(Icons.speed, color: Colors.white),
                 tooltip: 'Velocidad de reproducción',
@@ -307,25 +455,53 @@ class _InlineVideoPageState extends State<_InlineVideoPage> {
           child: SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  IconButton(
-                    icon: Icon(
-                      controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
-                      color: Colors.white,
-                    ),
-                    onPressed: _togglePlay,
+                  ValueListenableBuilder(
+                    valueListenable: controller,
+                    builder: (context, value, _) {
+                      final pos = value.position;
+                      final dur = value.duration;
+                      final maxMs = dur.inMilliseconds > 0 ? dur.inMilliseconds.toDouble() : 1.0;
+                      return Row(
+                        children: [
+                          Text(_fmtDuration(pos), style: const TextStyle(color: Colors.white, fontSize: 11)),
+                          Expanded(
+                            child: SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 2,
+                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                              ),
+                              child: Slider(
+                                value: pos.inMilliseconds.clamp(0, maxMs.round()).toDouble(),
+                                min: 0,
+                                max: maxMs,
+                                activeColor: Colors.deepPurple,
+                                inactiveColor: Colors.white24,
+                                onChanged: (v) => controller.seekTo(Duration(milliseconds: v.round())),
+                              ),
+                            ),
+                          ),
+                          Text(_fmtDuration(dur), style: const TextStyle(color: Colors.white, fontSize: 11)),
+                        ],
+                      );
+                    },
                   ),
-                  Expanded(
-                    child: VideoProgressIndicator(
-                      controller,
-                      allowScrubbing: true,
-                      colors: const VideoProgressColors(playedColor: Colors.deepPurple),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Text('${_speed}x', style: const TextStyle(color: Colors.white)),
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                          color: Colors.white,
+                        ),
+                        onPressed: _togglePlay,
+                      ),
+                      const Spacer(),
+                      Text('${_speed}x', style: const TextStyle(color: Colors.white)),
+                      const SizedBox(width: 16),
+                    ],
                   ),
                 ],
               ),

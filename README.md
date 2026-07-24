@@ -63,6 +63,53 @@ Si no instalás ni activás Shizuku, la app funciona igual con normalidad en
 todo el resto del almacenamiento; simplemente no vas a poder tocar esas
 carpetas específicas del sistema.
 
+## Novedades de esta versión
+
+- Indicador de video configurable: duración, tamaño o desactivado.
+- Orden de fotos/videos por nombre, tamaño o duración, ascendente/descendente
+  con una flecha para invertir (por defecto: más reciente arriba).
+- Orden de carpetas por nombre, tamaño o cantidad de archivos.
+- Filtro de contenido: todo, solo imágenes o solo videos.
+- Columnas de la grilla ajustables (2 a 6).
+- "Seleccionar todo" en una carpeta (fotos/videos y carpetas), con
+  confirmación antes de borrar.
+- Selección múltiple de carpetas para mover o eliminar juntas.
+- Detección de la tarjeta SD como acceso rápido adicional.
+- Distintivo visual (punto verde) en las carpetas que sí tienen contenido.
+- Categorías de acceso rápido para mover archivos ("Todas", "Amor", etc.),
+  asignables desde el menú ⋮ de cada carpeta ("Categorizar").
+- Info de carpeta con cantidad de imágenes/videos (sin contar subcarpetas).
+- Doble toque a los lados del video para retroceder/adelantar 10s.
+- El selector de "Mover a" ahora aparece como una hoja flotante encima del
+  visor, sin salir de la foto/video.
+- Visor de video: ajuste de aspecto (ajustar/rellenar/estirar), repetir,
+  reproducir el siguiente al terminar, barra de progreso arrastrable.
+- Mosaico de video: sin margen o con margen de color elegible, filas/columnas
+  manuales, detección de escenas (heurística simple que prioriza cambios de
+  plano reales en vez de cortar por tiempo fijo), marca de tiempo por imagen.
+- Botón directo "Abrir con Shizuku" cuando una carpeta protegida no se puede
+  listar de forma normal (antes solo se sugería por texto).
+
+## Lo que NO se pudo hacer todavía (y por qué)
+
+- **Highlight reel / resumen en video**: generar un video nuevo recortando y
+  uniendo varias escenas del original requiere una librería de codificación
+  de video de verdad (no solo extraer fotogramas sueltos, como hace el
+  mosaico). La opción estándar para esto en Flutter, `ffmpeg_kit_flutter`,
+  fue retirada oficialmente por su autor en 2025 y sus binarios ya no están
+  disponibles — agregarla haría fallar la compilación, igual que pasó con
+  otros paquetes viejos en este proyecto. Las alternativas actuales están
+  incompletas o sin mantenimiento para Android. Si querés igual avanzar con
+  esto, se puede intentar con una integración nativa a medida (mucho más
+  trabajo y menos estable), o dejarlo para cuando exista un reemplazo
+  confiable.
+- **Videos .m3u8 que no permiten adelantar**: algunas transmisiones HLS se
+  publican sin un índice completo de "seek" (les falta información que le
+  diga al reproductor dónde puede saltar), o están armadas para reproducirse
+  solo de corrido. Es una limitación del archivo/códec en sí, no algo que la
+  app pueda forzar. Si querés poder adelantar esos videos, la única forma
+  confiable es convertirlos antes a .mp4 con una herramienta externa en tu PC.
+
 ## Cómo compilar el APK con GitHub Actions
 
 1. Crea un repositorio nuevo en GitHub (puede ser privado).
